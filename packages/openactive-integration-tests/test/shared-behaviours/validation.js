@@ -6,8 +6,38 @@ function shouldBeValidResponse(getter, name, logger, options = {}) {
   let doValidate = async () => {
     if (results) return results;
 
-    let value = getter();
-    results = await validate(value, options);
+    let optionsWithRemoteJson = Object.assign({
+      loadRemoteJson: true,
+      remoteJsonCachePath: '/tmp',
+      remoteJsonCacheTimeToLive: 3600
+    }, options);
+
+    let response = getter();
+
+    let body = response.body;
+
+    if (options.validationMode === "OrdersFeed") {
+      body = body.data;
+    }
+
+    let statusCode = response.response && response.response.statusCode;
+    let statusMessage = response.response && response.response.statusMessage;
+
+    if (statusCode < 200 || statusCode >= 300) {
+      optionsWithRemoteJson.validationMode = "OpenBookingError";
+
+      // little nicer error message for completely failed responses.
+      if (!body) {
+        return [
+          {
+            severity: "failure",
+            message: `Server returned an error ${statusCode} (${statusMessage}) with an empty body.`
+          }
+        ];
+      }
+    }
+
+    results = await validate(body, optionsWithRemoteJson);
     return results;
   };
 
@@ -15,22 +45,13 @@ function shouldBeValidResponse(getter, name, logger, options = {}) {
     it("passes validation checks", async function() {
       let results = await doValidate();
 
+      logger.recordResponseValidations(name, results);
+
       let errors = results
         .filter(result => result.severity === "failure")
         .map(result => {
           return `FAILURE: ${result.path}: ${result.message.split("\n")[0]}`;
         });
-
-      let warnings = results
-        .filter(result => result.severity === "warning")
-        .map(result => {
-          return `WARNING: ${result.path}: ${result.message.split("\n")[0]}`;
-        });
-
-      // TODO: These are currently printed randomly in the output, where they should be grouped with the tests
-      // console.warn(warnings.join("\n"));
-
-      logger.log("\n\n" + errors.join("\n") + "\n" + warnings.join("\n") + "\n\n")
 
       if (errors.length > 0) {
         throw new Error(errors.join("\n"));

@@ -3,14 +3,14 @@ const bookingShared = require("./book-shared");
 
 let testEvent = {
   title: "Single session, 5 spaces, non-free",
-  name: "OA-Test-BookCCancel-Paid-Success",
+  name: "OA-Test-BookOnly-ScheduledSession-Paid-Success",
   price: 14.95,
   event: {
     "@context": "https://openactive.io/",
     "@type": "ScheduledSession",
     superEvent: {
       "@type": "SessionSeries",
-      name: "OA-Test-BookCCancel-Paid-Success",
+      name: "OA-Test-BookOnly-ScheduledSession-Paid-Success",
       offers: [
         {
           "@type": "Offer",
@@ -28,8 +28,8 @@ let testEvent = {
   }
 };
 
-describe("Book and Cancel", function() {
-  describe("Book and Customer Cancel Success Without Payment", function() {
+describe("Book Only", function() {
+  describe("Book Only Success With Payment for ScheduledSession", function() {
     bookingShared.performTests.bind(this)(testEvent);
   });
 });

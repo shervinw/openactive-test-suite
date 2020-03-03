@@ -1,31 +1,25 @@
 const assert = require("assert");
 const chakram = require("chakram");
-const mustache = require("mustache");
 const uuidv5 = require("uuid/v5");
 const fs = require("fs");
 const config = require("config");
 
 var BOOKING_API_BASE = config.get("tests.bookingApiBase");
 var MICROSERVICE_BASE = config.get("tests.microserviceApiBase");
+var USE_RANDOM_OPPORTUNITIES = config.get("tests.useRandomOpportunities");
 
 var MEDIA_TYPE_HEADERS = {
   "Content-Type": "application/vnd.openactive.booking+json; version=1"
 };
 
-const c1req = require("../templates/c1-req.json");
-const c2req = require("../templates/c2-req.json");
-const breq = require("../templates/b-req.json");
-const ureq = require("../templates/u-req.json");
+const c1req = require("../templates/c1-req.js");
+const c2req = require("../templates/c2-req.js");
+const breq = require("../templates/b-req.js");
+const ureq = require("../templates/u-req.js");
 
 class RequestHelper {
   constructor(logger) {
     this.logger = logger;
-  }
-
-  log(msg) {
-    if (!this.logger) return;
-
-    this.logger.log(msg);
   }
 
   createHeaders(sellerId) {
@@ -37,214 +31,163 @@ class RequestHelper {
   }
 
   bookingTemplate(logger, templateJson, replacementMap, removePayment) {
-    if (typeof replacementMap.totalPaymentDue !== "undefined")
-      templateJson.totalPaymentDue.price = replacementMap.totalPaymentDue;
-    var template = JSON.stringify(templateJson, null, 2);
-
-    var req = mustache.render(template, replacementMap);
-
-    logger.log("\n\n** REQUEST **: \n\n" + req);
-
-    let jsonResult = JSON.parse(req);
+    let jsonResult = templateJson(replacementMap, removePayment);
     if (removePayment) delete jsonResult.payment;
+
     return jsonResult;
   }
 
   async getOrder(uuid) {
     const ordersFeedUpdate = await chakram.get(
-      MICROSERVICE_BASE + "get-order/" + uuid
+      MICROSERVICE_BASE + "get-order/" + uuid,
+      {
+        timeout: 30000
+      }
     );
     const rpdeItem = ordersFeedUpdate.body;
 
-    this.log(
-      "\n\n** Orders RPDE excerpt " +
-        ordersFeedUpdate.response.statusCode +
-        "**: \n\n" +
-        JSON.stringify(rpdeItem, null, 2)
-    );
+    this.logger && this.logger.recordResponse('get-order', ordersFeedUpdate);
 
-    return {
-      rpdeItem,
-      ordersFeedUpdate
-    };
+    return ordersFeedUpdate;
   }
 
   async getMatch(eventId) {
     const respObj = await chakram.get(
-      MICROSERVICE_BASE + "get-cached-opportunity/" + encodeURIComponent(eventId)
+      MICROSERVICE_BASE + "get-cached-opportunity/" + encodeURIComponent(eventId),
+      {
+        timeout: 60000
+      }
     );
     const rpdeItem = respObj.body;
 
-    this.log(
-      "\n\n** Opportunity RPDE excerpt **: \n\n" +
-        JSON.stringify(rpdeItem, null, 2)
-    );
+    this.logger && this.logger.recordResponse('get-match', respObj);
 
-    let opportunityId, offerId, sellerId;
-
-    if (rpdeItem) {
-      opportunityId = rpdeItem.data["@id"]; // TODO : Support duel feeds: .subEvent[0]
-      offerId = rpdeItem.data.superEvent.offers[0]["@id"];
-      sellerId = rpdeItem.data.superEvent.organizer["@id"];
-    }
-
-    this.log(`opportunityId: ${opportunityId}; offerId: ${offerId}`);
-
-    return {
-      apiResponse: respObj,
-      opportunityId,
-      offerId,
-      sellerId
-    };
+    return respObj;
   }
 
   async putOrderQuoteTemplate(uuid, params) {
+    let payload = this.bookingTemplate(this.logger, c1req, params);
+
+    this.logger && this.logger.recordRequest('C1', payload);
+
     let c1Response = await chakram.put(
       BOOKING_API_BASE + "order-quote-templates/" + uuid,
-      this.bookingTemplate(this.logger, c1req, params),
+      payload,
       {
-        headers: this.createHeaders(params.sellerId)
+        headers: this.createHeaders(params.sellerId),
+        timeout: 10000
       }
     );
 
-    this.log(
-      "\n\n** C1 response: ** \n\n" + JSON.stringify(c1Response.body, null, 2)
-    );
-    const totalPaymentDue = c1Response.body.totalPaymentDue.price;
+    this.logger && this.logger.recordResponse('C1', c1Response);
 
-    return {
-      c1Response,
-      totalPaymentDue
-    };
+    return c1Response;
   }
 
   async putOrderQuote(uuid, params) {
+    const payload = this.bookingTemplate(this.logger, c2req, params);
+
+    this.logger && this.logger.recordRequest('C2', payload);
+
     const c2Response = await chakram.put(
       BOOKING_API_BASE + "order-quotes/" + uuid,
-      this.bookingTemplate(this.logger, c2req, params),
+      payload,
       {
-        headers: this.createHeaders(params.sellerId)
+        headers: this.createHeaders(params.sellerId),
+        timeout: 10000
       }
     );
 
-    this.log(
-      "\n\n** C2 response: ** \n\n" + JSON.stringify(c2Response.body, null, 2)
-    );
-    const totalPaymentDue = c2Response.body.totalPaymentDue.price;
+    this.logger && this.logger.recordResponse('C2', c2Response);
 
-    return {
-      c2Response,
-      totalPaymentDue
-    };
+    return c2Response;
   }
 
   async putOrder(uuid, params) {
+    const payload = this.bookingTemplate(this.logger, breq, params, true);
+
+    this.logger && this.logger.recordRequest('B', payload);
+
     const bResponse = await chakram.put(
       BOOKING_API_BASE + "orders/" + uuid,
-      this.bookingTemplate(this.logger, breq, params, true),
+      payload,
       {
-        headers: this.createHeaders(params.sellerId)
+        headers: this.createHeaders(params.sellerId),
+        timeout: 10000
       }
     );
 
-    this.log(
-      "\n\n** B response:" +
-        bResponse.response.statusCode +
-        " **\n\n" +
-        JSON.stringify(bResponse.body, null, 2)
-    );
-    const orderItemId =
-      bResponse.body && bResponse.body.orderedItem
-        ? bResponse.body.orderedItem[0]["@id"]
-        : "NONE";
+    this.logger && this.logger.recordResponse('B', bResponse);
 
-    return {
-      bResponse,
-      orderItemId
-    };
+    return bResponse;
   }
 
   async cancelOrder(uuid, params) {
+    const payload = this.bookingTemplate(this.logger, ureq, params);
+
+    this.logger && this.logger.recordRequest('U', payload);
+
     const uResponse = await chakram.patch(
       BOOKING_API_BASE + "orders/" + uuid,
-      this.bookingTemplate(this.logger, ureq, params),
+      payload,
       {
-        headers: this.createHeaders(params.sellerId)
+        headers: this.createHeaders(params.sellerId),
+        timeout: 10000
       }
     );
 
-    if (uResponse.body) {
-      this.log(
-        "\n\n** Order Cancellation response: " +
-          respObj.response.statusCode +
-          " **\n\n" +
-          JSON.stringify(uResponse.body, null, 2)
-      );
-    } else {
-      this.log("\n\n** Order Cancellation response: **\n\nNO CONTENT");
-    }
+    this.logger && this.logger.recordResponse('U', uResponse);
 
-    return {
-      uResponse
-    };
+    return uResponse;
   }
 
-  async createScheduledSession(event, params) {
-    const respObj = await chakram.post(
-      BOOKING_API_BASE + "test-interface/scheduledsession",
+  async createOpportunity(event, params) {
+    let respObj;
+
+    respObj = await chakram.post(
+      BOOKING_API_BASE + "test-interface/" + event['@type'],
       event,
       {
-        headers: this.createHeaders(params.sellerId)
+        headers: this.createHeaders(params.sellerId),
+        timeout: 10000
       }
     );
 
-    if (respObj.body) {
-      this.log(
-        "\n\n** Test Interface POST response: " +
-          respObj.response.statusCode +
-          " **\n\n" +
-          JSON.stringify(respObj.body, null, 2)
-      );
-    } else {
-      this.log(
-        "\n\n** Test Interface POST response: " +
-          respObj.response.statusCode +
-          " **\n\nNO CONTENT"
-      );
-    }
+    this.logger && this.logger.recordResponse('create-session', respObj);
 
-    return {
-      respObj
-    };
+    return respObj;
   }
 
-  async deleteScheduledSession(eventId, params = {}) {
+  async getRandomOpportunity(type, params) {
+    let respObj;
+
+    respObj = await chakram.get(
+      "http://localhost:3000/get-random-opportunity" + ( type ? "?type=" + type : "" )
+    )
+
+    // TODO: Do we need to rename this from 'create-session'?
+    this.logger && this.logger.recordResponse('random-opportunity', respObj);
+
+    return respObj;
+  }
+
+  async deleteOpportunity(eventId, eventType, params = {}) {
+    if (USE_RANDOM_OPPORTUNITIES) return null;
+
     const respObj = await chakram.delete(
       BOOKING_API_BASE +
-        "test-interface/scheduledsession/" +
+        "test-interface/" + eventType + "/" +
         encodeURIComponent(eventId),
       null,
       {
-        headers: this.createHeaders(params.sellerId)
+        headers: this.createHeaders(params.sellerId),
+        timeout: 10000
       }
     );
 
-    if (respObj.body) {
-      this.log(
-        "\n\n** Test Interface DELETE response: " +
-          respObj.response.statusCode +
-          " **\n\n" +
-          JSON.stringify(respObj.body, null, 2)
-      );
-    } else {
-      this.log(
-        "\n\n** Test Interface DELETE response: " +
-          respObj.response.statusCode +
-          " **\n\nNO CONTENT"
-      );
-    }
+    this.logger && this.logger.recordResponse('delete-session', respObj);
 
-    return { respObj };
+    return respObj;
   }
 
   async deleteOrder(uuid, params) {
@@ -252,24 +195,12 @@ class RequestHelper {
       BOOKING_API_BASE + "orders/" + uuid,
       null,
       {
-        headers: this.createHeaders(params.sellerId)
+        headers: this.createHeaders(params.sellerId),
+        timeout: 10000
       }
     );
 
-    if (respObj.body) {
-      this.log(
-        "\n\n** Orders DELETE response: " +
-          respObj.response.statusCode +
-          " **\n\n" +
-          JSON.stringify(respObj.body, null, 2)
-      );
-    } else {
-      this.log(
-        "\n\n** Orders DELETE response: " +
-          respObj.response.statusCode +
-          " **\n\nNO CONTENT"
-      );
-    }
+    this.logger && this.logger.recordResponse('delete-order', respObj);
 
     return !!respObj.body;
   }
