@@ -2,6 +2,7 @@ const chalk = require('chalk');
 const Handlebars = require('handlebars');
 const pMemoize = require('p-memoize');
 const fs = require('fs').promises;
+const stripAnsi = require('strip-ansi');
 
 class ReportGenerator {
   constructor(logger) {
@@ -16,6 +17,12 @@ class ReportGenerator {
       const chalkFn = args.reduce(function(p,n){return p[n]}, chalk);
 
       return chalkFn(options.fn(this));
+    });
+
+    Handlebars.registerHelper("renderSuiteName", function(suiteName, options) {
+      if (suiteName.length <= 2) return "Test setup";
+
+      return suiteName.slice(2).join(" >> ");
     });
 
     Handlebars.registerHelper("validationIcon", function(severity, options) {
@@ -43,11 +50,36 @@ class ReportGenerator {
     });
 
     Handlebars.registerHelper("firstLine", function(message, options) {
-      return message.split("\n")[0];
+      return stripAnsi(message.split("\n")[0]);
     });
 
     Handlebars.registerHelper("json", function(data, options) {
       return JSON.stringify(data, null, 4);
+    });
+
+    Handlebars.registerHelper("logsFor", (suite, type, options) => {
+      let first = true;
+      let logs = this.logger.logsFor(suite, type);
+      let ret = '';
+      for (let [i,value] of logs.entries()) {
+
+        let result = options.fn(
+          value,
+          {
+            data: {
+              first: i === 0,
+              last: i === (logs.length - 1),
+              index: i,
+              key: i,
+            },
+            blockParams: [value, i]
+          },
+        );
+
+        ret += result;
+      }
+
+      return ret;
     });
   }
 
@@ -75,7 +107,10 @@ class ReportGenerator {
   async writeMarkdown() {
     let template = await this.getTemplate('report.md');
 
-    let data = template(this.logger);
+    let data = template(this.logger, {
+      allowProtoMethodsByDefault: true,
+      allowProtoPropertiesByDefault: true
+    });
 
     await fs.writeFile(this.logger.markdownPath, data);
   }

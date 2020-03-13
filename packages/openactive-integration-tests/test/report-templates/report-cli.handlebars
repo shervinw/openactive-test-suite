@@ -1,18 +1,28 @@
-{{# chalk "bold" }}{{ title }}{{/chalk}}
+{{# chalk "bold" }}{{{ title }}}{{/chalk}}
 
-{{ description }}
+{{{ description }}}
 
 See `{{{ markdownPath }}}` for more detailed info.
 
-Flows:
-{{#each flow}}
-• {{# chalk "bold" "red" }}{{{ @key }}}{{/chalk}}
-{{#each response.validations}}
-    {{ validationIcon severity }} {{{firstLine message}}}
+{{#each activeSuites }}
+{{#each . }}{{# chalk "bold" "yellow" }}>>{{/chalk}} {{# chalk "bold" "green" }}{{{ . }}}{{/chalk}} {{/each}}
+    {{#logsFor . "spec"}}
+  {{ specIcon spec.status }} {{{firstLine spec.title}}}
+        {{#each spec.failureMessages}}
+      {{{firstLine . }}}
+        {{/each}}
+    {{/logsFor}}
+    {{#logsFor . "validations"}}
+        {{#each validations }}
+  {{ validationIcon severity }} {{{firstLine message}}}
+        {{/each}}
+    {{/logsFor}}
 {{/each}}
-{{#each response.specs}}
-    {{ specIcon status }} {{{firstLine title}}}
-{{/each}}
-{{/each}}
+
+{{#logsFor null "request"}}
+    {{~# if isPending }}
+*** Pending request: {{stage}} - {{{request.method}}} {{{ request.url }}}
+    {{/if~}}
+{{/logsFor}}
 
 ======
